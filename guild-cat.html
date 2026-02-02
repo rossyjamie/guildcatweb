@@ -75,18 +75,19 @@ games.forEach(game => {
     gamesGrid.appendChild(card);
 
     // ===== FETCH LIVE PLAYERS =====
-    async function updatePlayers() {
-        try {
-            const res = await fetch("/live-players");
-            const data = await res.json();
-            console.log("DEBUG: Live player data:", data);
-            const live = data.totalPlayers ?? 0;
-            liveCount.textContent = `Players: ${live}`;
-        } catch (err) {
-            console.error("DEBUG: Failed to fetch live players", err);
-            liveCount.textContent = "Players: N/A";
-        }
+    // ===== FETCH LIVE PLAYERS =====
+async function updatePlayers() {
+    try {
+        const res = await fetch(`/live-players/${game.placeId}`);
+        const data = await res.json();
+        console.log(`DEBUG: Live player data for ${game.name}:`, data);
+        const live = data.totalPlayers ?? 0;
+        liveCount.textContent = `Players: ${live}`;
+    } catch (err) {
+        console.error(`DEBUG: Failed to fetch live players for ${game.name}`, err);
+        liveCount.textContent = "Players: N/A";
     }
+}
 
     updatePlayers();
     setInterval(updatePlayers, 15000); // refresh every 15s

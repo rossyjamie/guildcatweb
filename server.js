@@ -4,35 +4,49 @@ const path = require('path');
 
 // Import fetch - use native fetch if Node 18+, otherwise use node-fetch
 let fetch;
-try {
+if (typeof global.fetch === 'function') {
   fetch = global.fetch;
-} catch {
+} else {
   fetch = require('node-fetch');
 }
 
 const app = express();
-const UNIVERSE_ID = '8947950112'; // your Roblox universe ID
 
-// Cache to store server data
-let cache = {
-  servers: null,
-  lastFetch: 0
+// Map place IDs to universe IDs
+const GAME_MAPPINGS = {
+  '115461364475281': '8947950112',  // Ice Boat Racing
+  '132547252102193': '8798246146'   // 1 Kill = 1 Armor! (replace with actual universe ID)
 };
 
+// Cache to store server data for each game
+let cache = {};
 const CACHE_DURATION = 10000; // 10 seconds
+let isRefreshing = {};
 
 // serve static files (HTML, JS, CSS) from current folder
 app.use(express.static(__dirname));
 
-// endpoint to get live players
-app.get('/live-players', async (req, res) => {
+// endpoint to get live players for a specific game
+app.get('/live-players/:placeId', async (req, res) => {
   try {
+    const { placeId } = req.params;
+    const universeId = GAME_MAPPINGS[placeId];
+    
+    if (!universeId) {
+      return res.status(404).json({ error: 'Game not found' });
+    }
+    
     const now = Date.now();
     
+    // Initialize cache for this game if it doesn't exist
+    if (!cache[universeId]) {
+      cache[universeId] = { data: null, lastFetch: 0 };
+    }
+    
     // Always return cached data immediately if available (even if stale)
-    if (cache.servers) {
-      console.log("DEBUG: Returning cached data");
-      const gameInfo = cache.servers.data?.[0];
+    if (cache[universeId].data) {
+      console.log(`DEBUG: Returning cached data for universe ${universeId}`);
+      const gameInfo = cache[universeId].data.data?.[0];
       const totalPlayers = gameInfo?.playing || 0;
       
       res.json({
@@ -41,18 +55,18 @@ app.get('/live-players', async (req, res) => {
       });
       
       // If cache is stale, refresh in background (don't wait for it)
-      if (now - cache.lastFetch >= CACHE_DURATION) {
-        console.log("DEBUG: Cache stale, refreshing in background");
-        refreshCache();
+      if (now - cache[universeId].lastFetch >= CACHE_DURATION) {
+        console.log(`DEBUG: Cache stale for universe ${universeId}, refreshing in background`);
+        refreshCache(universeId);
       }
       return;
     }
     
     // No cache yet, fetch immediately
-    console.log("DEBUG: No cache, fetching immediately");
-    await fetchAndCacheGameData();
+    console.log(`DEBUG: No cache for universe ${universeId}, fetching immediately`);
+    await fetchAndCacheGameData(universeId);
     
-    const gameInfo = cache.servers.data?.[0];
+    const gameInfo = cache[universeId].data?.data?.[0];
     const totalPlayers = gameInfo?.playing || 0;
     
     res.json({
@@ -66,9 +80,9 @@ app.get('/live-players', async (req, res) => {
 });
 
 // Helper function to fetch and cache game data
-async function fetchAndCacheGameData() {
+async function fetchAndCacheGameData(universeId) {
   try {
-    const gameUrl = `https://games.roblox.com/v1/games?universeIds=${UNIVERSE_ID}`;
+    const gameUrl = `https://games.roblox.com/v1/games?universeIds=${universeId}`;
     
     const gameRes = await fetch(gameUrl, {
       headers: {
@@ -76,7 +90,7 @@ async function fetchAndCacheGameData() {
       }
     });
     
-    console.log("DEBUG: Games API status:", gameRes.status);
+    console.log(`DEBUG: Games API status for ${universeId}:`, gameRes.status);
     const responseText = await gameRes.text();
     
     if (!gameRes.ok) {
@@ -84,18 +98,25 @@ async function fetchAndCacheGameData() {
     }
     
     const data = JSON.parse(responseText);
-    console.log("DEBUG: Games API response updated");
+    console.log(`DEBUG: Games API response updated for ${universeId}`);
     
-    cache.servers = data;
-    cache.lastFetch = Date.now();
+    if (!cache[universeId]) {
+      cache[universeId] = {};
+    }
+    cache[universeId].data = data;
+    cache[universeId].lastFetch = Date.now();
   } catch (err) {
-    console.error("DEBUG: Failed to refresh cache", err);
+    console.error(`DEBUG: Failed to refresh cache for ${universeId}`, err);
   }
 }
 
 // Refresh cache in background
-function refreshCache() {
-  fetchAndCacheGameData();
+function refreshCache(universeId) {
+  if (isRefreshing[universeId]) return;
+  isRefreshing[universeId] = true;
+  fetchAndCacheGameData(universeId).finally(() => {
+    isRefreshing[universeId] = false;
+  });
 }
 
 // serve your HTML page at root
@@ -105,6 +126,11 @@ app.get('/', (req, res) => {
 
 // start server
 const PORT = 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running at http://localhost:${PORT}`);
+  
+  // Warm the cache for all games
+  for (const universeId of Object.values(GAME_MAPPINGS)) {
+    await fetchAndCacheGameData(universeId);
+  }
 });
